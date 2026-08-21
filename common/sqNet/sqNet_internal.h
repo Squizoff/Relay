@@ -41,13 +41,15 @@ extern int sqnet_initialized;
 
 uint64_t now_ms( void );
 time_t	 sqnet_now_sec( void );
-int		 is_socket_open( int sockfd );
+int		 is_socket_open( sock_t sockfd );
+#ifndef _WIN32
 uint64_t htonll( uint64_t v );
 uint64_t ntohll( uint64_t v );
-int		 same_addr( const struct sockaddr_in* a, const struct sockaddr_in* b );
-int		 sqnet_send_packet_fd( int sockfd, const uint8_t* payload, size_t payload_len );
-int		 sqnet_recv_packet_fd( int sockfd, uint8_t* out, size_t out_cap );
-Client*	 find_client_by_sockfd( Conn* conn, int sockfd );
+#endif
+int		same_addr( const struct sockaddr_in* a, const struct sockaddr_in* b );
+int		sqnet_send_packet_fd( sock_t sockfd, const uint8_t* payload, size_t payload_len );
+int		sqnet_recv_packet_fd( sock_t sockfd, uint8_t* out, size_t out_cap );
+Client* find_client_by_sockfd( Conn* conn, sock_t sockfd );
 
 void conn_set_encryption_keys( Conn* conn, const uint32_t new_key[32], uint32_t new_secret_key, uint64_t salt );
 void client_set_encryption_keys( Client* c, const uint32_t new_key[32], uint32_t new_secret_key, uint64_t salt );
@@ -60,7 +62,7 @@ uint32_t compute_hash( const uint8_t* data, size_t len, uint32_t secret );
 int		 sqnet_generate_x25519_keypair( uint8_t out_public[32], uint8_t out_private[32] );
 int		 sqnet_x25519_shared_secret( const uint8_t private_key[32], const uint8_t peer_public[32], uint8_t out_shared[32] );
 int		 compute_handshake_proof(
-	const uint8_t shared_secret[32], uint64_t client_nonce, uint64_t server_nonce, uint64_t client_id, uint8_t role_tag, uint8_t out_proof[32] );
+		 const uint8_t shared_secret[32], uint64_t client_nonce, uint64_t server_nonce, uint64_t client_id, uint8_t role_tag, uint8_t out_proof[32] );
 void derive_session_keys(
 	const uint8_t shared_secret[32], uint64_t client_nonce, uint64_t server_nonce, uint32_t out_key[SESSION_KEY_WORDS], uint32_t* out_secret );
 
@@ -69,10 +71,10 @@ int send_encrypted_payload(
 int openssl_payload_pass( uint8_t* data, size_t data_len, const uint32_t session_key[SESSION_KEY_WORDS], uint32_t session_secret, uint64_t iv,
 	uint64_t ts_ms, uint8_t tag[CONN_TAG_SIZE], int encrypt );
 
-void cleanup_stale_assemblies( int sockfd, time_t now );
-void cleanup_socket_assemblies( int sockfd );
+void cleanup_stale_assemblies( sock_t sockfd, time_t now );
+void cleanup_socket_assemblies( sock_t sockfd );
 int	 process_fragmented_payload( Conn* conn, Client* c, const struct sockaddr_in* addr, uint8_t* payload_ptr, size_t payload_len, uint32_t rx_secret,
-	void* buf, size_t size, Client** sender );
+	 void* buf, size_t size, Client** sender );
 
 int send_fragmented_with_keys(
 	Conn* conn, const void* data, size_t len, const uint32_t key[32], uint32_t secret_key, const struct sockaddr_in* addr );

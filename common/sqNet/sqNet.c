@@ -38,14 +38,14 @@ static int conn_accept_client( Conn* conn )
 {
 	struct sockaddr_in peer_addr;
 	socklen_t		   peer_len = sizeof( peer_addr );
-	int				   fd;
+	sock_t			   fd;
 	Client*			   c;
 
 	if ( !conn || !conn->is_listener || !is_socket_open( conn->sockfd ) )
 		return -1;
 
 	fd = accept( conn->sockfd, (struct sockaddr*) &peer_addr, &peer_len );
-	if ( fd < 0 )
+	if ( IS_INVALID_SOCKET( fd ) )
 		return -1;
 
 	if ( conn->flags & CONN_FLAG_NONBLOCK ) {
@@ -140,7 +140,7 @@ static int parse_encrypted_control(
 static int send_handshake_plain( Conn* conn, const struct sockaddr_in* addr, uint8_t type, const uint8_t* payload, uint16_t payload_len )
 {
 	uint8_t packet[HS_HEADER_SIZE + 128u];
-	int		out_fd = -1;
+	sock_t	out_fd = INVALID_SOCK;
 	int		rc;
 
 	if ( !conn || payload_len > sizeof( packet ) - HS_HEADER_SIZE )
@@ -287,8 +287,13 @@ int conn_connect( Conn* conn, const char* host, uint16_t port )
 	int				   rc = -1;
 	int				   n;
 	Client*			   server_client = NULL;
-	struct timeval	   tv = { 1, 0 };
-	struct timeval	   tv_restore = { 0, 0 };
+#ifdef _WIN32
+	DWORD rcv_timeout = 1000;
+	DWORD rcv_timeout_restore = 0;
+#else
+	struct timeval rcv_timeout = { 1, 0 };
+	struct timeval rcv_timeout_restore = { 0, 0 };
+#endif
 
 	CHECK_INIT();
 	if ( !conn || !is_socket_open( conn->sockfd ) ) {
@@ -335,7 +340,11 @@ int conn_connect( Conn* conn, const char* host, uint16_t port )
 		goto cleanup;
 	}
 
-	setsockopt( conn->sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof( tv ) );
+#ifdef _WIN32
+	setsockopt( conn->sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*) &rcv_timeout, sizeof( rcv_timeout ) );
+#else
+	setsockopt( conn->sockfd, SOL_SOCKET, SO_RCVTIMEO, &rcv_timeout, sizeof( rcv_timeout ) );
+#endif
 
 	deadline = sqnet_now_sec() + 5;
 	while ( sqnet_now_sec() <= deadline ) {
@@ -404,7 +413,7 @@ int conn_connect( Conn* conn, const char* host, uint16_t port )
 			}
 
 			server_client->addr = server_addr;
-			server_client->sockfd = -1;
+			server_client->sockfd = INVALID_SOCK;
 			server_client->connected = 1;
 			server_client->last_seen = sqnet_now_sec();
 			server_client->client_id = client_id;
@@ -419,7 +428,11 @@ int conn_connect( Conn* conn, const char* host, uint16_t port )
 
 	LOGE( "Handshake/key exchange failed or timeout" );
 cleanup:
-	(void) setsockopt( conn->sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv_restore, sizeof( tv_restore ) );
+#ifdef _WIN32
+	(void) setsockopt( conn->sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*) &rcv_timeout_restore, sizeof( rcv_timeout_restore ) );
+#else
+	(void) setsockopt( conn->sockfd, SOL_SOCKET, SO_RCVTIMEO, &rcv_timeout_restore, sizeof( rcv_timeout_restore ) );
+#endif
 	if ( rc != 0 && server_client ) {
 		free_client( server_client );
 		conn->clients = NULL;
@@ -593,7 +606,7 @@ static int process_packet( Conn* conn, Client* c, uint8_t packet_buf[], int n, v
 	return handle_encrypted_packet( conn, c, packet_buf, n, buf, size, sender );
 }
 
-static int recv_and_process_once( Conn* conn, int fd, Client* c, void* buf, size_t size, Client** sender )
+static int recv_and_process_once( Conn* conn, sock_t fd, Client* c, void* buf, size_t size, Client** sender )
 {
 	uint8_t packet_buf[SQNET_MAX_PACKET_SIZE];
 	int		n = sqnet_recv_packet_fd( fd, packet_buf, sizeof( packet_buf ) );
@@ -619,7 +632,7 @@ int conn_recv( Conn* conn, void* buf, size_t size, Client** sender )
 	if ( conn->is_listener ) {
 		fd_set		   rfds;
 		struct timeval tv = { 0, 0 };
-		int			   maxfd = conn->sockfd;
+		sock_t		   maxfd = conn->sockfd;
 		Client*		   it = conn->clients;
 
 		FD_ZERO( &rfds );
@@ -633,7 +646,7 @@ int conn_recv( Conn* conn, void* buf, size_t size, Client** sender )
 			it = it->next;
 		}
 
-		int sel = select( maxfd + 1, &rfds, NULL, NULL, &tv );
+		int sel = select( (int) maxfd + 1, &rfds, NULL, NULL, &tv );
 		if ( sel <= 0 )
 			return 0;
 
@@ -657,7 +670,7 @@ int conn_recv( Conn* conn, void* buf, size_t size, Client** sender )
 		return 0;
 	} else {
 		Client* c = conn->clients;
-		int		in_fd = conn->sockfd;
+		sock_t	in_fd = conn->sockfd;
 		int		attempts = 0;
 
 		for ( ;; ) {

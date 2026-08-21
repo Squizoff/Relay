@@ -6,7 +6,6 @@
 #include <string.h>
 #include <stdarg.h>
 #include <ctype.h>
-#include <arpa/inet.h>
 #include <time.h>
 
 #define HANDLE_DB_PATH ".relay_handles.txt"

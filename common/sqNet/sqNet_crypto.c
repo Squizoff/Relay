@@ -75,7 +75,7 @@ static void derive_openssl_material( const uint32_t session_key[SESSION_KEY_WORD
 	if ( EVP_PKEY_CTX_set_hkdf_md( pctx, EVP_sha256() ) <= 0 )
 		goto fail;
 
-	if ( EVP_PKEY_CTX_set1_hkdf_key( pctx, seed, off ) <= 0 )
+	if ( EVP_PKEY_CTX_set1_hkdf_key( pctx, seed, (int) off ) <= 0 )
 		goto fail;
 
 	uint8_t info_key[] = { 0xA3 };
@@ -382,7 +382,7 @@ void derive_session_keys(
 		goto fail;
 	if ( EVP_PKEY_CTX_set1_hkdf_key( pctx, shared_secret, 32 ) <= 0 )
 		goto fail;
-	if ( EVP_PKEY_CTX_add1_hkdf_info( pctx, material, off ) <= 0 )
+	if ( EVP_PKEY_CTX_add1_hkdf_info( pctx, material, (int) off ) <= 0 )
 		goto fail;
 
 	uint8_t out[SESSION_KEY_WORDS * 4 + 4];
@@ -420,7 +420,7 @@ int send_encrypted_payload(
 	uint64_t   ts_ms;
 	uint8_t	   tag[CONN_TAG_SIZE];
 	int		   out_rc;
-	int		   out_fd = -1;
+	sock_t	   out_fd = INVALID_SOCK;
 	sqobf_ctx* ctx1 = NULL;
 
 	if ( !conn || !payload || payload_len == 0 || payload_len > (size_t) UINT16_MAX )
@@ -467,7 +467,7 @@ int send_encrypted_payload(
 	memcpy( encrypted_data + CONN_PAYLOAD_OFFSET + CONN_PLAIN_LEN_SIZE, payload, payload_len );
 
 	if ( pad_len > 0 ) {
-		if ( RAND_bytes( encrypted_data + CONN_PAYLOAD_OFFSET + CONN_PLAIN_LEN_SIZE + payload_len, pad_len ) != 1 ) {
+		if ( RAND_bytes( encrypted_data + CONN_PAYLOAD_OFFSET + CONN_PLAIN_LEN_SIZE + payload_len, (int) pad_len ) != 1 ) {
 			LOGE( "RAND_bytes failed (padding)" );
 			free( encrypted_data );
 			return -1;

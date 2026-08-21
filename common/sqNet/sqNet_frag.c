@@ -19,7 +19,7 @@ enum
 
 typedef struct FragmentAssembly
 {
-	int						 sockfd;
+	sock_t					 sockfd;
 	struct sockaddr_in		 addr;
 	uint32_t				 msg_id;
 	uint16_t				 frag_count;
@@ -47,7 +47,7 @@ static void free_assembly( FragmentAssembly* a )
 	free( a );
 }
 
-static size_t count_socket_assemblies( int sockfd )
+static size_t count_socket_assemblies( sock_t sockfd )
 {
 	size_t count = 0;
 	for ( FragmentAssembly* cur = g_assemblies; cur; cur = cur->next ) {
@@ -73,7 +73,7 @@ static int deliver_payload( const uint8_t* src, size_t len, void* dst, size_t ds
 	return (int) len;
 }
 
-static FragmentAssembly* find_assembly( int sockfd, const struct sockaddr_in* addr, uint32_t msg_id )
+static FragmentAssembly* find_assembly( sock_t sockfd, const struct sockaddr_in* addr, uint32_t msg_id )
 {
 	for ( FragmentAssembly* cur = g_assemblies; cur; cur = cur->next ) {
 		if ( cur->sockfd == sockfd && cur->msg_id == msg_id && same_addr( &cur->addr, addr ) )
@@ -82,7 +82,7 @@ static FragmentAssembly* find_assembly( int sockfd, const struct sockaddr_in* ad
 	return NULL;
 }
 
-static FragmentAssembly* create_assembly( int sockfd, const struct sockaddr_in* addr, uint32_t msg_id, uint16_t frag_count )
+static FragmentAssembly* create_assembly( sock_t sockfd, const struct sockaddr_in* addr, uint32_t msg_id, uint16_t frag_count )
 {
 	size_t assembly_bytes;
 
@@ -136,7 +136,7 @@ static void remove_assembly( FragmentAssembly* target )
 	}
 }
 
-void cleanup_stale_assemblies( int sockfd, time_t now )
+void cleanup_stale_assemblies( sock_t sockfd, time_t now )
 {
 	FragmentAssembly** pp = &g_assemblies;
 
@@ -144,7 +144,7 @@ void cleanup_stale_assemblies( int sockfd, time_t now )
 		FragmentAssembly* cur = *pp;
 		const int		  expired = ( now - cur->last_seen ) > CONN_FRAGMENT_TIMEOUT;
 
-		if ( expired && ( sockfd < 0 || cur->sockfd == sockfd ) ) {
+		if ( expired && ( IS_INVALID_SOCKET( sockfd ) || cur->sockfd == sockfd ) ) {
 			*pp = cur->next;
 			free_assembly( cur );
 		} else {
@@ -153,7 +153,7 @@ void cleanup_stale_assemblies( int sockfd, time_t now )
 	}
 }
 
-void cleanup_socket_assemblies( int sockfd )
+void cleanup_socket_assemblies( sock_t sockfd )
 {
 	FragmentAssembly** pp = &g_assemblies;
 

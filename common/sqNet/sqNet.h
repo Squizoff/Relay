@@ -14,7 +14,7 @@ typedef struct ssl_ctx_st SSL_CTX;
 typedef struct Client
 {
 	struct sockaddr_in addr;
-	int				   sockfd;
+	sock_t			   sockfd;
 	int				   connected;
 	time_t			   last_seen;
 	uint64_t		   client_id;
@@ -44,7 +44,7 @@ typedef struct Client
 
 typedef struct Conn
 {
-	int				   sockfd;
+	sock_t			   sockfd;
 	struct sockaddr_in addr;
 	int				   is_listener;
 	Client*			   clients;
@@ -80,7 +80,7 @@ int		conn_bind( Conn* conn, const char* host, uint16_t port );
 void	conn_close( Conn* conn );
 int		conn_recv( Conn* conn, void* buf, size_t size, Client** sender );
 int		conn_send( Conn* conn, const void* data, size_t len, Client* client );
-int		conn_fileno( Conn* conn );
+sock_t	conn_fileno( Conn* conn );
 int		conn_wait( Conn* conn, int timeout_ms );
 Client* conn_clients( Conn* conn );
 int		conn_set_flags( Conn* conn, int flags_for_set, int flags_for_clear );

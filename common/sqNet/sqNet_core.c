@@ -29,12 +29,12 @@ time_t sqnet_now_sec( void )
 #endif
 }
 
-int is_socket_open( int sockfd )
+int is_socket_open( sock_t sockfd )
 {
-	return sockfd >= 0;
+	return !IS_INVALID_SOCKET( sockfd );
 }
 
-static int sqnet_send_all( int sockfd, const uint8_t* data, size_t len )
+static int sqnet_send_all( sock_t sockfd, const uint8_t* data, size_t len )
 {
 	size_t sent_total = 0;
 
@@ -57,17 +57,20 @@ static int sqnet_send_all( int sockfd, const uint8_t* data, size_t len )
 			return -1;
 		}
 
-		if ( errno == EINTR ) {
+		int err = s_errno;
+
+		if ( err == SOCK_ERR_INTR ) {
 			continue;
 		}
-		if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
+
+		if ( SOCK_IS_AGAIN( err ) ) {
 			fd_set		   wfds;
 			struct timeval tv;
 			FD_ZERO( &wfds );
 			FD_SET( sockfd, &wfds );
 			tv.tv_sec = 5;
 			tv.tv_usec = 0;
-			int sel = select( sockfd + 1, NULL, &wfds, NULL, &tv );
+			int sel = select( (int) sockfd + 1, NULL, &wfds, NULL, &tv );
 			if ( sel <= 0 ) {
 				return -1;
 			}
@@ -79,7 +82,7 @@ static int sqnet_send_all( int sockfd, const uint8_t* data, size_t len )
 	return 0;
 }
 
-static int sqnet_recv_all( int sockfd, uint8_t* data, size_t len )
+static int sqnet_recv_all( sock_t sockfd, uint8_t* data, size_t len )
 {
 	size_t got_total = 0;
 
@@ -96,17 +99,20 @@ static int sqnet_recv_all( int sockfd, uint8_t* data, size_t len )
 			return -1;
 		}
 
-		if ( errno == EINTR ) {
+		int err = s_errno;
+
+		if ( err == SOCK_ERR_INTR ) {
 			continue;
 		}
-		if ( errno == EAGAIN || errno == EWOULDBLOCK ) {
+
+		if ( SOCK_IS_AGAIN( err ) ) {
 			fd_set		   rfds;
 			struct timeval tv;
 			FD_ZERO( &rfds );
 			FD_SET( sockfd, &rfds );
 			tv.tv_sec = 5;
 			tv.tv_usec = 0;
-			int sel = select( sockfd + 1, &rfds, NULL, NULL, &tv );
+			int sel = select( (int) sockfd + 1, &rfds, NULL, NULL, &tv );
 			if ( sel <= 0 ) {
 				return -1;
 			}
@@ -118,7 +124,7 @@ static int sqnet_recv_all( int sockfd, uint8_t* data, size_t len )
 	return 0;
 }
 
-int sqnet_send_packet_fd( int sockfd, const uint8_t* payload, size_t payload_len )
+int sqnet_send_packet_fd( sock_t sockfd, const uint8_t* payload, size_t payload_len )
 {
 	uint32_t payload_len_be;
 
@@ -132,7 +138,7 @@ int sqnet_send_packet_fd( int sockfd, const uint8_t* payload, size_t payload_len
 	return sqnet_send_all( sockfd, payload, payload_len );
 }
 
-int sqnet_recv_packet_fd( int sockfd, uint8_t* out, size_t out_cap )
+int sqnet_recv_packet_fd( sock_t sockfd, uint8_t* out, size_t out_cap )
 {
 	uint32_t payload_len_be;
 	size_t	 payload_len;
@@ -185,6 +191,7 @@ void conn_cleanup( void )
 	socket_cleanup();
 }
 
+#ifndef _WIN32
 uint64_t htonll( uint64_t v )
 {
 	uint32_t hi = htonl( (uint32_t) ( v >> 32 ) );
@@ -198,6 +205,7 @@ uint64_t ntohll( uint64_t v )
 	uint32_t lo = ntohl( (uint32_t) ( v & (uint64_t) UINT32_MAX ) );
 	return ( (uint64_t) lo << 32 ) | hi;
 }
+#endif
 
 int same_addr( const struct sockaddr_in* a, const struct sockaddr_in* b )
 {
@@ -235,7 +243,7 @@ Client* get_or_add_client( Conn* conn, struct sockaddr_in* addr )
 		return NULL;
 
 	c->addr = *addr;
-	c->sockfd = -1;
+	c->sockfd = INVALID_SOCK;
 	c->connected = 1;
 	c->last_seen = sqnet_now_sec();
 	c->client_id = sqrand();
@@ -246,7 +254,7 @@ Client* get_or_add_client( Conn* conn, struct sockaddr_in* addr )
 	return c;
 }
 
-Client* find_client_by_sockfd( Conn* conn, int sockfd )
+Client* find_client_by_sockfd( Conn* conn, sock_t sockfd )
 {
 	Client* c;
 
@@ -287,9 +295,9 @@ Conn conn_socket( void )
 	memset( &conn, 0, sizeof( conn ) );
 
 	conn.sockfd = socket( AF_INET, SOCK_STREAM, 0 );
-	if ( conn.sockfd < 0 ) {
+	if ( IS_INVALID_SOCKET( conn.sockfd ) ) {
 		LOGE( "socket() failed: %s", socket_error() );
-		conn.sockfd = -1;
+		conn.sockfd = INVALID_SOCK;
 		return conn;
 	}
 
@@ -343,7 +351,7 @@ void conn_close( Conn* conn )
 		Client* tmp = c;
 		c = c->next;
 		if ( tmp->sockfd == conn->sockfd )
-			tmp->sockfd = -1;
+			tmp->sockfd = INVALID_SOCK;
 		free_client( tmp );
 	}
 	conn->clients = NULL;
@@ -354,13 +362,13 @@ void conn_close( Conn* conn )
 
 	cleanup_socket_assemblies( conn->sockfd );
 	close( conn->sockfd );
-	conn->sockfd = -1;
+	conn->sockfd = INVALID_SOCK;
 }
 
-int conn_fileno( Conn* conn )
+sock_t conn_fileno( Conn* conn )
 {
 	CHECK_INIT();
-	return conn && is_socket_open( conn->sockfd ) ? conn->sockfd : -1;
+	return conn && is_socket_open( conn->sockfd ) ? conn->sockfd : INVALID_SOCK;
 }
 
 int conn_wait( Conn* conn, int timeout_ms )
@@ -372,7 +380,7 @@ int conn_wait( Conn* conn, int timeout_ms )
 	fd_set			readfds;
 	struct timeval	tv;
 	struct timeval* ptv = NULL;
-	int				maxfd = conn->sockfd;
+	sock_t			maxfd = conn->sockfd;
 	Client*			c = conn->clients;
 
 	FD_ZERO( &readfds );
@@ -392,15 +400,10 @@ int conn_wait( Conn* conn, int timeout_ms )
 	}
 
 	{
-		int ret = select( maxfd + 1, &readfds, NULL, NULL, ptv );
+		int ret = select( (int) maxfd + 1, &readfds, NULL, NULL, ptv );
 		if ( ret < 0 ) {
-#ifdef _WIN32
-			if ( s_errno == WSAEINTR )
+			if ( s_errno == SOCK_ERR_INTR )
 				return 0;
-#else
-			if ( s_errno == EINTR )
-				return 0;
-#endif
 			LOGE( "select failed: %s", socket_error() );
 			return -1;
 		}
@@ -413,6 +416,8 @@ Client* conn_clients( Conn* conn )
 	return conn ? conn->clients : NULL;
 }
 
+#ifndef _WIN32
+
 struct
 {
 	int conn_flag;
@@ -423,31 +428,41 @@ struct
 	{ CONN_FLAG_ASYNC, O_ASYNC },
 	{ CONN_FLAG_SYNC, O_SYNC },
 	{ CONN_FLAG_DSYNC, O_DSYNC },
-#ifdef O_RSYNC
+
+# ifdef O_RSYNC
 	{ CONN_FLAG_RSYNC, O_RSYNC },
-#endif
-#ifdef O_NOATIME
+# endif
+
+# ifdef O_NOATIME
 	{ CONN_FLAG_NOATIME, O_NOATIME },
-#endif
-#ifdef O_DIRECT
+# endif
+
+# ifdef O_DIRECT
 	{ CONN_FLAG_DIRECT, O_DIRECT },
-#endif
-#ifdef O_LARGEFILE
+# endif
+
+# ifdef O_LARGEFILE
 	{ CONN_FLAG_LARGEFILE, O_LARGEFILE },
-#endif
-#ifdef O_NDELAY
+# endif
+
+# ifdef O_NDELAY
 	{ CONN_FLAG_NDELAY, O_NDELAY },
-#endif
-#ifdef O_CLOEXEC
+# endif
+
+# ifdef O_CLOEXEC
 	{ CONN_FLAG_CLOEXEC, O_CLOEXEC },
-#endif
-#ifdef O_PATH
+# endif
+
+# ifdef O_PATH
 	{ CONN_FLAG_PATH, O_PATH },
-#endif
-#ifdef O_TMPFILE
+# endif
+
+# ifdef O_TMPFILE
 	{ CONN_FLAG_TMPFILE, O_TMPFILE },
-#endif
+# endif
 };
+
+#endif /* !_WIN32 */
 
 int conn_set_flags( Conn* conn, int flags_for_set, int flags_for_clear )
 {
