@@ -1,0 +1,89 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux Build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libssl-dev \
+            qt6-base-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build \
+            --config Release \
+            --parallel
+
+      - name: Check binaries
+        run: |
+          ls -lah build/bin/
+          file build/bin/server
+          file build/bin/client
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v6
+        with:
+          name: relay-linux
+          path: build/bin/
+
+  windows:
+    name: Windows Build
+    runs-on: windows-2025
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
+            pthreads4w:x64-windows `
+            openssl:x64-windows `
+            qtbase:x64-windows
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT\scripts\buildsystems\vcpkg.cmake"
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build build `
+            --config Release `
+            --parallel
+
+      - name: Check binaries
+        shell: pwsh
+        run: |
+          Get-ChildItem build/bin/Release/
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v6
+        with:
+          name: relay-windows
+          path: build/bin/Release/
