@@ -59,7 +59,7 @@ jobs:
         shell: pwsh
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
-            pthreads4w:x64-windows `
+            pthreads:x64-windows `
             openssl:x64-windows `
             qtbase:x64-windows
 
