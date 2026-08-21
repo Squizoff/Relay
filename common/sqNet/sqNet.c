@@ -87,33 +87,21 @@ fail:
 	return -1;
 }
 
-static uint64_t replay_fingerprint( uint64_t iv, uint64_t ts_ms )
+static int replay_seen_or_mark( Client* c, uint64_t iv )
 {
-	uint64_t x = iv ^ ( ts_ms + 0x9E3779B97F4A7C15ULL );
-	x ^= x >> 30;
-	x *= 0xBF58476D1CE4E5B9ULL;
-	x ^= x >> 27;
-	x *= 0x94D049BB133111EBULL;
-	x ^= x >> 31;
-	return x ? x : 1ULL;
-}
-
-static int replay_seen_or_mark( Client* c, uint64_t iv, uint64_t ts_ms )
-{
-	uint64_t fp;
-	uint8_t	 i;
-
 	if ( !c )
 		return 0;
 
-	fp = replay_fingerprint( iv, ts_ms );
-	for ( i = 0; i < (uint8_t) ( sizeof( c->replay_ring ) / sizeof( c->replay_ring[0] ) ); ++i ) {
-		if ( c->replay_ring[i] == fp )
+	const size_t replay_count = sizeof( c->replay_ring ) / sizeof( c->replay_ring[0] );
+
+	for ( size_t i = 0; i < replay_count; ++i ) {
+		if ( c->replay_ring[i] == iv )
 			return 1;
 	}
 
-	c->replay_ring[c->replay_ring_pos] = fp;
-	c->replay_ring_pos = (uint8_t) ( ( c->replay_ring_pos + 1u ) % ( sizeof( c->replay_ring ) / sizeof( c->replay_ring[0] ) ) );
+	c->replay_ring[c->replay_ring_pos] = iv;
+	c->replay_ring_pos = (uint16_t) ( ( c->replay_ring_pos + 1u ) % replay_count );
+
 	return 0;
 }
 
@@ -200,11 +188,8 @@ static void clear_handshake_state( Client* c )
 	memset( c->hs_shared_secret, 0, sizeof( c->hs_shared_secret ) );
 }
 
-#define CONN_MAX_PACKET_AGE_MS 60000u
-#define CONN_MAX_FUTURE_SKEW_MS 10000u
-
-static int try_decrypt_payload( uint8_t* packet_buf, size_t packet_len, const uint32_t rx_key[SESSION_KEY_WORDS], uint32_t rx_secret,
-	size_t* payload_len_out, uint64_t* iv_out, uint64_t* ts_out )
+static int try_decrypt_payload(
+	uint8_t* packet_buf, size_t packet_len, const uint32_t rx_key[SESSION_KEY_WORDS], uint32_t rx_secret, size_t* payload_len_out, uint64_t* iv_out )
 {
 	uint64_t   iv_net;
 	uint64_t   iv;
@@ -224,13 +209,6 @@ static int try_decrypt_payload( uint8_t* packet_buf, size_t packet_len, const ui
 
 	memcpy( &ts_net, packet_buf + CONN_IV_SIZE, sizeof( ts_net ) );
 	ts_ms = ntohll( ts_net );
-	{
-		uint64_t now = now_ms();
-		if ( ts_ms + (uint64_t) CONN_MAX_PACKET_AGE_MS < now )
-			return 0;
-		if ( ts_ms > now + (uint64_t) CONN_MAX_FUTURE_SKEW_MS )
-			return 0;
-	}
 
 	payload_len = packet_len - CONN_OVERHEAD_SIZE;
 	memcpy( tag, packet_buf + packet_len - CONN_TAG_SIZE, CONN_TAG_SIZE );
@@ -264,8 +242,6 @@ static int try_decrypt_payload( uint8_t* packet_buf, size_t packet_len, const ui
 	*payload_len_out = plain_len;
 	if ( iv_out )
 		*iv_out = iv;
-	if ( ts_out )
-		*ts_out = ts_ms;
 	return 1;
 }
 
@@ -559,9 +535,8 @@ static int handle_encrypted_packet( Conn* conn, Client* c, uint8_t packet_buf[],
 	uint32_t rx_secret = c->secret_key;
 	size_t	 payload_len = 0;
 	uint64_t packet_iv = 0;
-	uint64_t packet_ts = 0;
 
-	int dec_rc = try_decrypt_payload( packet_buf, (size_t) n, c->encryption_key, rx_secret, &payload_len, &packet_iv, &packet_ts );
+	int dec_rc = try_decrypt_payload( packet_buf, (size_t) n, c->encryption_key, rx_secret, &payload_len, &packet_iv );
 	if ( dec_rc <= 0 ) {
 		if ( dec_rc < 0 ) {
 			if ( conn->is_listener && c )
@@ -571,6 +546,9 @@ static int handle_encrypted_packet( Conn* conn, Client* c, uint8_t packet_buf[],
 		return 0;
 	}
 
+	if ( replay_seen_or_mark( c, packet_iv ) )
+		return 0;
+
 	uint8_t		   ctrl_type = 0;
 	const uint8_t* ctrl_payload = NULL;
 	uint16_t	   ctrl_payload_len = 0;
@@ -578,9 +556,6 @@ static int handle_encrypted_packet( Conn* conn, Client* c, uint8_t packet_buf[],
 	if ( parse_encrypted_control( packet_buf + CONN_PAYLOAD_OFFSET, payload_len, &ctrl_type, &ctrl_payload, &ctrl_payload_len ) ) {
 		return 0;
 	}
-
-	if ( replay_seen_or_mark( c, packet_iv, packet_ts ) )
-		return 0;
 
 	c->last_seen = sqnet_now_sec();
 	c->connected = 1;
@@ -671,21 +646,8 @@ int conn_recv( Conn* conn, void* buf, size_t size, Client** sender )
 	} else {
 		Client* c = conn->clients;
 		sock_t	in_fd = conn->sockfd;
-		int		attempts = 0;
 
-		for ( ;; ) {
-			if ( ++attempts > 256 )
-				return 0;
-
-			int rc = recv_and_process_once( conn, in_fd, c, buf, size, sender );
-			if ( rc <= 0 ) {
-				if ( rc < 0 )
-					return rc;
-				continue;
-			}
-
-			return rc;
-		}
+		return recv_and_process_once( conn, in_fd, c, buf, size, sender );
 	}
 }
 

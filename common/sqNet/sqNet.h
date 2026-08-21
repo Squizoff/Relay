@@ -30,8 +30,8 @@ typedef struct Client
 	uint64_t		   rel_last_send_ms;
 	int				   rel_retries;
 	int				   rel_waiting_ack;
-	uint64_t		   replay_ring[64];
-	uint8_t			   replay_ring_pos;
+	uint64_t		   replay_ring[256];
+	uint16_t		   replay_ring_pos;
 	int				   hs_pending;
 	uint64_t		   hs_client_nonce;
 	uint64_t		   hs_server_nonce;

@@ -1423,7 +1423,7 @@ int relay_client_poll( RelayClient* c, int timeout_ms )
 	uint8_t buf[MAX_LINE];
 	Client* sender = NULL;
 	int		n = conn_recv( &c->conn, buf, sizeof( buf ) - 1, &sender );
-	if ( n <= 0 ) {
+	if ( n < 0 ) {
 		pthread_mutex_lock( &c->lock );
 		set_status_locked( c, "disconnected" );
 		c->connected = 0;
@@ -1433,6 +1433,9 @@ int relay_client_poll( RelayClient* c, int timeout_ms )
 		pthread_mutex_unlock( &c->lock );
 		return -1;
 	}
+
+	if ( n == 0 )
+		return 0;
 
 	buf[n] = '\0';
 	trim_eol( (char*) buf );
