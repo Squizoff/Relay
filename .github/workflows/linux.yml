@@ -1,0 +1,47 @@
+name: Linux Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libssl-dev \
+            qt6-base-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build build \
+            --config Release \
+            --parallel
+
+      - name: Check binaries
+        run: |
+          ls -lah build/bin/
+          file build/bin/server
+          file build/bin/client
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-linux
+          path: build/bin/
