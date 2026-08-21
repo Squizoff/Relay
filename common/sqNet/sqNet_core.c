@@ -7,7 +7,12 @@ int sqnet_initialized = 0;
 uint64_t now_ms( void )
 {
 #ifdef _WIN32
-	return (uint64_t) GetTickCount64();
+	FILETIME	   ft;
+	ULARGE_INTEGER uli;
+	GetSystemTimeAsFileTime( &ft );
+	uli.LowPart = ft.dwLowDateTime;
+	uli.HighPart = ft.dwHighDateTime;
+	return ( uli.QuadPart / 10000ULL ) - 11644473600000ULL;
 #else
 	struct timeval tv;
 	gettimeofday( &tv, NULL );
@@ -18,13 +23,13 @@ uint64_t now_ms( void )
 time_t sqnet_now_sec( void )
 {
 #ifdef _WIN32
-	return (time_t) ( GetTickCount64() / 1000u );
+	FILETIME	   ft;
+	ULARGE_INTEGER uli;
+	GetSystemTimeAsFileTime( &ft );
+	uli.LowPart = ft.dwLowDateTime;
+	uli.HighPart = ft.dwHighDateTime;
+	return (time_t) ( ( uli.QuadPart / 10000000ULL ) - 11644473600ULL );
 #else
-# ifdef CLOCK_MONOTONIC
-	struct timespec ts;
-	if ( clock_gettime( CLOCK_MONOTONIC, &ts ) == 0 )
-		return (time_t) ts.tv_sec;
-# endif
 	return time( NULL );
 #endif
 }

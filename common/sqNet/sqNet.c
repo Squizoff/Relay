@@ -200,8 +200,8 @@ static void clear_handshake_state( Client* c )
 	memset( c->hs_shared_secret, 0, sizeof( c->hs_shared_secret ) );
 }
 
-#define CONN_MAX_PACKET_AGE_MS 10000u
-#define CONN_MAX_FUTURE_SKEW_MS 1500u
+#define CONN_MAX_PACKET_AGE_MS 60000u
+#define CONN_MAX_FUTURE_SKEW_MS 10000u
 
 static int try_decrypt_payload( uint8_t* packet_buf, size_t packet_len, const uint32_t rx_key[SESSION_KEY_WORDS], uint32_t rx_secret,
 	size_t* payload_len_out, uint64_t* iv_out, uint64_t* ts_out )
