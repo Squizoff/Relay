@@ -22,6 +22,7 @@ jobs:
             cmake \
             pkg-config \
             libssl-dev \
+            libsqlite3-dev \
             qt6-base-dev
 
       - name: Configure
@@ -55,12 +56,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Setup vcpkg binary cache
+        shell: pwsh
+        run: |
+          $cache = "$env:RUNNER_TEMP\vcpkg\archives"
+
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+
+          "VCPKG_DEFAULT_BINARY_CACHE=$cache" >> $env:GITHUB_ENV
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\vcpkg\archives
+          key: vcpkg-windows-x64-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: |
+            vcpkg-windows-x64-
+
       - name: Install dependencies
         shell: pwsh
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install `
             pthreads:x64-windows `
             openssl:x64-windows `
+            sqlite3:x64-windows `
             qtbase:x64-windows
 
       - name: Configure
