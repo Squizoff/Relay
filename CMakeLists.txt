@@ -76,6 +76,14 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto SSL)
 
 if(WIN32)
+    find_package(unofficial-sqlite3 CONFIG REQUIRED)
+    set(SQLITE_TARGET unofficial::sqlite3::sqlite3)
+else()
+    find_package(SQLite3 REQUIRED)
+    set(SQLITE_TARGET SQLite::SQLite3)
+endif()
+
+if(WIN32)
     find_package(PThreads4W REQUIRED)
 else()
     find_package(Threads REQUIRED)
@@ -100,6 +108,7 @@ target_include_directories(server PRIVATE
 target_link_libraries(server PRIVATE
     OpenSSL::Crypto
     OpenSSL::SSL
+    ${SQLITE_TARGET}
 )
 
 if(WIN32)

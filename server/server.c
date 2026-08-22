@@ -1,6 +1,7 @@
 #include "relay_common.h"
 #include "sqNet/sqNet.h"
 #include "sqNet/sqNet_internal.h"
+#include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,9 +9,11 @@
 #include <ctype.h>
 #include <time.h>
 
-#define HANDLE_DB_PATH ".relay_handles.txt"
+#define HANDLE_DB_PATH "relay_sv.db"
 #define AUTH_CHALLENGE_TTL 30
 #define AUTH_ROLE_TAG 0x41u
+
+static sqlite3* handle_db = NULL;
 
 typedef struct Peer
 {
@@ -219,63 +222,137 @@ static Peer* peer_find_by_handle( const char* handle )
 	return NULL;
 }
 
+static int registry_init( void )
+{
+	char* err = NULL;
+
+	if ( sqlite3_open( HANDLE_DB_PATH, &handle_db ) != SQLITE_OK ) {
+		fprintf( stderr, "sqlite3_open failed: %s\n", handle_db ? sqlite3_errmsg( handle_db ) : "unknown error" );
+
+		if ( handle_db ) {
+			sqlite3_close( handle_db );
+			handle_db = NULL;
+		}
+
+		return 0;
+	}
+
+	const char* sql = "CREATE TABLE IF NOT EXISTS handles ("
+					  "handle TEXT PRIMARY KEY,"
+					  "pubkey TEXT NOT NULL UNIQUE"
+					  ");";
+
+	if ( sqlite3_exec( handle_db, sql, NULL, NULL, &err ) != SQLITE_OK ) {
+		fprintf( stderr, "sqlite3 table creation failed: %s\n", err ? err : "unknown error" );
+
+		sqlite3_free( err );
+		sqlite3_close( handle_db );
+		handle_db = NULL;
+
+		return 0;
+	}
+
+	return 1;
+}
+
+static void registry_shutdown( void )
+{
+	if ( handle_db ) {
+		sqlite3_close( handle_db );
+		handle_db = NULL;
+	}
+}
+
 static int registry_lookup_handle( const char* handle, char pubkey[65] )
 {
-	FILE* f = fopen( HANDLE_DB_PATH, "r" );
-	if ( !f )
+	if ( !handle_db || !handle || !pubkey )
 		return 0;
 
-	char file_handle[MAX_NICK + 1];
-	char file_pubkey[65];
-	int	 found = 0;
+	static const char* sql = "SELECT pubkey "
+							 "FROM handles "
+							 "WHERE handle = ?1 "
+							 "LIMIT 1;";
 
-	while ( fscanf( f, "%31s %64s", file_handle, file_pubkey ) == 2 ) {
-		if ( strcmp( file_handle, handle ) == 0 ) {
-			snprintf( pubkey, 65, "%s", file_pubkey );
+	sqlite3_stmt* stmt = NULL;
+
+	if ( sqlite3_prepare_v2( handle_db, sql, -1, &stmt, NULL ) != SQLITE_OK )
+		return 0;
+
+	sqlite3_bind_text( stmt, 1, handle, -1, SQLITE_TRANSIENT );
+
+	int found = 0;
+
+	if ( sqlite3_step( stmt ) == SQLITE_ROW ) {
+		const unsigned char* value = sqlite3_column_text( stmt, 0 );
+
+		if ( value ) {
+			snprintf( pubkey, 65, "%s", (const char*) value );
 			found = 1;
-			break;
 		}
 	}
 
-	fclose( f );
+	sqlite3_finalize( stmt );
 	return found;
 }
 
 static int registry_lookup_pubkey( const char* pubkey, char handle[MAX_NICK + 1] )
 {
-	FILE* f = fopen( HANDLE_DB_PATH, "r" );
-	if ( !f )
+	if ( !handle_db || !pubkey || !handle )
 		return 0;
 
-	char file_handle[MAX_NICK + 1];
-	char file_pubkey[65];
-	int	 found = 0;
+	static const char* sql = "SELECT handle "
+							 "FROM handles "
+							 "WHERE pubkey = ?1 "
+							 "LIMIT 1;";
 
-	while ( fscanf( f, "%31s %64s", file_handle, file_pubkey ) == 2 ) {
-		if ( strcmp( file_pubkey, pubkey ) == 0 ) {
-			snprintf( handle, MAX_NICK + 1, "%s", file_handle );
+	sqlite3_stmt* stmt = NULL;
+
+	if ( sqlite3_prepare_v2( handle_db, sql, -1, &stmt, NULL ) != SQLITE_OK )
+		return 0;
+
+	sqlite3_bind_text( stmt, 1, pubkey, -1, SQLITE_TRANSIENT );
+
+	int found = 0;
+
+	if ( sqlite3_step( stmt ) == SQLITE_ROW ) {
+		const unsigned char* value = sqlite3_column_text( stmt, 0 );
+
+		if ( value ) {
+			snprintf( handle, MAX_NICK + 1, "%s", (const char*) value );
 			found = 1;
-			break;
 		}
 	}
 
-	fclose( f );
+	sqlite3_finalize( stmt );
 	return found;
 }
 
 static int registry_bind_handle( const char* handle, const char* pubkey )
 {
+	if ( !handle_db || !handle || !pubkey )
+		return 0;
+
 	char bound_pubkey[65];
+
 	if ( registry_lookup_handle( handle, bound_pubkey ) )
 		return strcmp( bound_pubkey, pubkey ) == 0;
 
-	FILE* f = fopen( HANDLE_DB_PATH, "a" );
-	if ( !f )
+	static const char* sql = "INSERT INTO handles (handle, pubkey) "
+							 "VALUES (?1, ?2);";
+
+	sqlite3_stmt* stmt = NULL;
+
+	if ( sqlite3_prepare_v2( handle_db, sql, -1, &stmt, NULL ) != SQLITE_OK )
 		return 0;
 
-	fprintf( f, "%s %s\n", handle, pubkey );
-	fclose( f );
-	return 1;
+	sqlite3_bind_text( stmt, 1, handle, -1, SQLITE_TRANSIENT );
+	sqlite3_bind_text( stmt, 2, pubkey, -1, SQLITE_TRANSIENT );
+
+	int result = sqlite3_step( stmt );
+
+	sqlite3_finalize( stmt );
+
+	return result == SQLITE_DONE;
 }
 
 static Peer* peer_get_or_create( Client* c )
@@ -671,6 +748,12 @@ static void handle_line( Client* sender_client, char* line )
 int main( void )
 {
 	conn_init();
+
+	if ( !registry_init() ) {
+		fprintf( stderr, "failed to initialize SQLite database\n" );
+		return 1;
+	}
+
 	server = conn_socket();
 
 	uint16_t port = 7777;
@@ -700,5 +783,6 @@ int main( void )
 	}
 
 	conn_close( &server );
+	registry_shutdown();
 	return 0;
 }
