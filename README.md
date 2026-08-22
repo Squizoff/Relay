@@ -34,8 +34,8 @@ Please run clang-format before submitting a pull request if available.
 
 ## Platform support
 
-- Linux: primary development platform, actively tested
-- Windows: experimental support, not regularly tested
+- Linux
+- Windows
 
 ## License
 Relay is licensed under the GNU AGPLv3.
