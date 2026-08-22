@@ -378,11 +378,12 @@ static void e2e_record_replay_locked( E2EState* e, uint64_t iv, uint64_t ts )
 }
 
 #define RELAY_ACCOUNT_MAGIC "RLACC"
+#define RELAY_ACCOUNT_MAGIC_SIZE ( sizeof( RELAY_ACCOUNT_MAGIC ) )
 #define RELAY_ACCOUNT_VERSION 1u
 
 typedef struct RelayAccountFile
 {
-	char	 magic[8];
+	char	 magic[RELAY_ACCOUNT_MAGIC_SIZE];
 	uint32_t version;
 
 	char handle[MAX_NICK + 1];
