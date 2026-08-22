@@ -788,23 +788,6 @@ int main( int argc, char** argv )
 	QApplication app( argc, argv );
 	app.setStyle( "Fusion" );
 
-	bool	ok = false;
-	QString handle
-		= QInputDialog::getText( nullptr, "Choose your handle", "Type your unique handle and press Enter", QLineEdit::Normal, QString(), &ok );
-	handle = rtrimSpaces( handle );
-	if ( !ok || handle.isEmpty() ) {
-		QMessageBox::critical( nullptr, "Relay", "No handle" );
-		return 1;
-	}
-
-	QString nick
-		= QInputDialog::getText( nullptr, "Choose display name", "Type your visible nickname and press Enter", QLineEdit::Normal, handle, &ok );
-	nick = rtrimSpaces( nick );
-	if ( !ok || nick.isEmpty() ) {
-		QMessageBox::critical( nullptr, "Relay", "No display name" );
-		return 1;
-	}
-
 	RelayConfig cfg;
 	std::memset( &cfg, 0, sizeof( cfg ) );
 	RelayClient* client = nullptr;
@@ -819,13 +802,55 @@ int main( int argc, char** argv )
 		return 1;
 	}
 
-	char			 err[256] = { 0 };
-	const QByteArray handleUtf8 = handle.toUtf8();
-	const QByteArray nickUtf8 = nick.toUtf8();
-	if ( !relay_client_login( client, handleUtf8.constData(), nickUtf8.constData(), err, sizeof( err ) ) ) {
-		relay_client_destroy( client );
-		QMessageBox::critical( nullptr, "Relay", QString( "Auth rejected: %1" ).arg( err[0] ? err : "unknown" ) );
-		return 1;
+	char err[256] = { 0 };
+
+	QString handle;
+	QString nick;
+
+	if ( relay_client_load_account( client ) ) {
+
+		if ( !relay_client_login_saved( client, err, sizeof( err ) ) ) {
+			relay_client_destroy( client );
+
+			QMessageBox::critical( nullptr, "Relay", QString( "Saved account login failed: %1" ).arg( err[0] ? err : "unknown" ) );
+
+			return 1;
+		}
+
+		handle = fromUtf8Safe( relay_client_handle( client ) );
+		nick = fromUtf8Safe( relay_client_nick( client ) );
+
+	} else {
+
+		bool ok = false;
+
+		handle = QInputDialog::getText( nullptr, "Choose your handle", "Type your unique handle and press Enter", QLineEdit::Normal, QString(), &ok );
+
+		handle = rtrimSpaces( handle );
+
+		if ( !ok || handle.isEmpty() ) {
+			relay_client_destroy( client );
+			QMessageBox::critical( nullptr, "Relay", "No handle" );
+			return 1;
+		}
+
+		nick = QInputDialog::getText( nullptr, "Choose display name", "Type your visible nickname and press Enter", QLineEdit::Normal, handle, &ok );
+
+		nick = rtrimSpaces( nick );
+
+		if ( !ok || nick.isEmpty() ) {
+			relay_client_destroy( client );
+			QMessageBox::critical( nullptr, "Relay", "No display name" );
+			return 1;
+		}
+
+		const QByteArray handleUtf8 = handle.toUtf8();
+		const QByteArray nickUtf8 = nick.toUtf8();
+		if ( !relay_client_login( client, handleUtf8.constData(), nickUtf8.constData(), err, sizeof( err ) ) ) {
+			relay_client_destroy( client );
+			QMessageBox::critical( nullptr, "Relay", QString( "Auth rejected: %1" ).arg( err[0] ? err : "unknown" ) );
+			return 1;
+		}
 	}
 
 	if ( !relay_client_start( client ) ) {

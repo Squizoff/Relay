@@ -377,45 +377,137 @@ static void e2e_record_replay_locked( E2EState* e, uint64_t iv, uint64_t ts )
 		e->replay_count++;
 }
 
-static void make_identity_path( const RelayClient* c, char* out, size_t outcap )
+#define RELAY_ACCOUNT_MAGIC "RLACC"
+#define RELAY_ACCOUNT_VERSION 1u
+
+typedef struct RelayAccountFile
+{
+	char	 magic[8];
+	uint32_t version;
+
+	char handle[MAX_NICK + 1];
+	char nick[MAX_NICK + 1];
+
+	uint8_t public_key[32];
+	uint8_t private_key[32];
+} RelayAccountFile;
+
+static void make_account_path( const RelayClient* c, char* out, size_t outcap )
 {
 	if ( c->storage_dir[0] )
-		snprintf( out, outcap, "%s/.relay_identity.bin", c->storage_dir );
+		snprintf( out, outcap, "%s/.relay_account.bin", c->storage_dir );
 	else
-		snprintf( out, outcap, ".relay_identity.bin" );
+		snprintf( out, outcap, ".relay_account.bin" );
 }
 
-static int load_or_create_identity( const RelayClient* c, uint8_t pub[32], uint8_t priv[32] )
+static int load_account( RelayClient* c )
 {
 	char path[256];
-	make_identity_path( c, path, sizeof( path ) );
+	make_account_path( c, path, sizeof( path ) );
 
 	FILE* f = fopen( path, "rb" );
-	if ( f ) {
-		int ok = ( fread( pub, 1, 32, f ) == 32 ) && ( fread( priv, 1, 32, f ) == 32 );
-#ifndef _WIN32
-		fchmod( fileno( f ), 0600 );
-#endif
-		fclose( f );
-		if ( ok )
-			return 1;
-	}
-
-	if ( sqnet_generate_x25519_keypair( pub, priv ) != 0 )
+	if ( !f )
 		return 0;
 
-	f = open_private_file( path, "wb" );
-	if ( f ) {
-		fwrite( pub, 1, 32, f );
-		fwrite( priv, 1, 32, f );
-		fflush( f );
+	RelayAccountFile account;
+	memset( &account, 0, sizeof( account ) );
+
+	const int ok = fread( &account, 1, sizeof( account ), f ) == sizeof( account );
+
 #ifndef _WIN32
+	if ( ok )
 		fchmod( fileno( f ), 0600 );
 #endif
-		fclose( f );
-	}
+
+	fclose( f );
+
+	if ( !ok )
+		return 0;
+
+	if ( memcmp( account.magic, RELAY_ACCOUNT_MAGIC, sizeof( account.magic ) ) != 0 )
+		return 0;
+
+	if ( account.version != RELAY_ACCOUNT_VERSION )
+		return 0;
+
+	account.handle[MAX_NICK] = '\0';
+	account.nick[MAX_NICK] = '\0';
+
+	if ( !valid_handle( account.handle ) )
+		return 0;
+
+	if ( !valid_display_name( account.nick ) )
+		return 0;
+
+	memcpy( c->id_pub, account.public_key, sizeof( c->id_pub ) );
+	memcpy( c->id_priv, account.private_key, sizeof( c->id_priv ) );
+
+	snprintf( c->my_handle, sizeof( c->my_handle ), "%s", account.handle );
+
+	snprintf( c->my_nick, sizeof( c->my_nick ), "%s", account.nick );
+
+	hex_encode( c->id_pub, sizeof( c->id_pub ), c->my_id, sizeof( c->my_id ) );
 
 	return 1;
+}
+
+static int create_account_keys( RelayClient* c )
+{
+	if ( sqnet_generate_x25519_keypair( c->id_pub, c->id_priv ) != 0 )
+		return 0;
+
+	hex_encode( c->id_pub, sizeof( c->id_pub ), c->my_id, sizeof( c->my_id ) );
+
+	return 1;
+}
+
+static int save_account( const RelayClient* c )
+{
+	if ( !c )
+		return 0;
+
+	if ( !valid_handle( c->my_handle ) )
+		return 0;
+
+	if ( !valid_display_name( c->my_nick ) )
+		return 0;
+
+	char path[256];
+	make_account_path( c, path, sizeof( path ) );
+
+	RelayAccountFile account;
+	memset( &account, 0, sizeof( account ) );
+
+	memcpy( account.magic, RELAY_ACCOUNT_MAGIC, sizeof( account.magic ) );
+
+	account.version = RELAY_ACCOUNT_VERSION;
+
+	snprintf( account.handle, sizeof( account.handle ), "%s", c->my_handle );
+
+	snprintf( account.nick, sizeof( account.nick ), "%s", c->my_nick );
+
+	memcpy( account.public_key, c->id_pub, sizeof( account.public_key ) );
+
+	memcpy( account.private_key, c->id_priv, sizeof( account.private_key ) );
+
+	FILE* f = open_private_file( path, "wb" );
+	if ( !f )
+		return 0;
+
+	int ok = fwrite( &account, 1, sizeof( account ), f ) == sizeof( account );
+
+	if ( fflush( f ) != 0 )
+		ok = 0;
+
+#ifndef _WIN32
+	if ( fchmod( fileno( f ), 0600 ) != 0 )
+		ok = 0;
+#endif
+
+	if ( fclose( f ) != 0 )
+		ok = 0;
+
+	return ok;
 }
 
 static void chat_set_display_name( RelayChat* chat, const char* nick )
@@ -1328,6 +1420,14 @@ int relay_client_connect( RelayClient* c, const char* host, uint16_t port )
 	return 1;
 }
 
+int relay_client_load_account( RelayClient* c )
+{
+	if ( !c )
+		return 0;
+
+	return load_account( c );
+}
+
 int relay_client_login( RelayClient* c, const char* handle, const char* display_name, char* err, size_t errcap )
 {
 	if ( !c || !handle || !*handle || !display_name || !*display_name )
@@ -1343,14 +1443,15 @@ int relay_client_login( RelayClient* c, const char* handle, const char* display_
 		return 0;
 	}
 
-	if ( !load_or_create_identity( c, c->id_pub, c->id_priv ) ) {
-		pthread_mutex_lock( &c->lock );
-		set_status_locked( c, "failed to load/create identity" );
-		pthread_mutex_unlock( &c->lock );
-		return 0;
+	if ( c->my_id[0] == '\0' ) {
+		if ( !create_account_keys( c ) ) {
+			pthread_mutex_lock( &c->lock );
+			set_status_locked( c, "failed to create identity" );
+			pthread_mutex_unlock( &c->lock );
+			return 0;
+		}
 	}
 
-	hex_encode( c->id_pub, 32, c->my_id, sizeof( c->my_id ) );
 	send_linef( c, "AUTH %s %s %s", handle, display_name, c->my_id );
 
 	char errbuf[256] = { 0 };
@@ -1368,7 +1469,29 @@ int relay_client_login( RelayClient* c, const char* handle, const char* display_
 	snprintf( c->my_nick, sizeof( c->my_nick ), "%s", display_name );
 	set_status_locked( c, "connected as %s", c->my_nick );
 	pthread_mutex_unlock( &c->lock );
+
+	if ( !save_account( c ) ) {
+		pthread_mutex_lock( &c->lock );
+		set_status_locked( c, "warning: failed to save account" );
+		pthread_mutex_unlock( &c->lock );
+	}
+
 	return 1;
+}
+
+int relay_client_login_saved( RelayClient* c, char* err, size_t errcap )
+{
+	if ( !c )
+		return 0;
+
+	if ( !load_account( c ) ) {
+		if ( err && errcap )
+			snprintf( err, errcap, "account file not found or invalid" );
+
+		return 0;
+	}
+
+	return relay_client_login( c, c->my_handle, c->my_nick, err, errcap );
 }
 
 void relay_client_disconnect( RelayClient* c )

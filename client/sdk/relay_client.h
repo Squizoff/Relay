@@ -35,7 +35,9 @@ int	 relay_client_create( RelayClient** out, const RelayConfig* cfg );
 void relay_client_destroy( RelayClient* client );
 
 int	 relay_client_connect( RelayClient* client, const char* host, uint16_t port );
+int	 relay_client_load_account( RelayClient* c );
 int	 relay_client_login( RelayClient* client, const char* handle, const char* display_name, char* err, size_t errcap );
+int	 relay_client_login_saved( RelayClient* c, char* err, size_t errcap );
 void relay_client_disconnect( RelayClient* client );
 
 int	 relay_client_start( RelayClient* client );
